@@ -9,7 +9,7 @@ RUN go mod download
 
 COPY . .
 
-ARG SERVICE=server
+ARG SERVICE=gateway
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/app ./${SERVICE}
 
 FROM gcr.io/distroless/static-debian12:nonroot

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/joho/godotenv"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/reflection"
 
 	proto "connect-to-mongodb/grpc-analysis/proto"
 	appanalysis "connect-to-mongodb/internal/analysis"
@@ -41,6 +43,34 @@ func main() {
 		log.Println(".env not loaded, using environment variables")
 	}
 
+	repo, err := appanalysis.NewRepository(context.Background())
+	if err != nil {
+		log.Fatalf("failed to connect to MongoDB: %v", err)
+	}
+	defer repo.Close(context.Background())
+
+	service := appanalysis.NewService(repo)
+	grpcServer := grpc.NewServer()
+	proto.RegisterAnalysisServiceServer(grpcServer, appanalysis.NewGRPCServer(service))
+	reflection.Register(grpcServer)
+
+	grpcPort := os.Getenv("GRPC_PORT")
+	if grpcPort == "" {
+		grpcPort = "50051"
+	}
+
+	grpcListener, err := net.Listen("tcp", ":"+grpcPort)
+	if err != nil {
+		log.Fatalf("failed to listen on %s: %v", grpcPort, err)
+	}
+
+	go func() {
+		log.Printf("gRPC analysis service listening on :%s", grpcPort)
+		if err := grpcServer.Serve(grpcListener); err != nil {
+			log.Fatalf("gRPC server stopped: %v", err)
+		}
+	}()
+
 	grpcAddr := os.Getenv("GRPC_ADDR")
 	if grpcAddr == "" {
 		grpcAddr = "127.0.0.1:50051"
@@ -53,14 +83,6 @@ func main() {
 	defer conn.Close()
 
 	client := proto.NewAnalysisServiceClient(conn)
-
-	reportRepo, err := appanalysis.NewRepository(context.Background())
-	if err != nil {
-		log.Printf("report endpoint will be unavailable: %v", err)
-	}
-	if reportRepo != nil {
-		defer reportRepo.Close(context.Background())
-	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -120,11 +142,9 @@ func main() {
 		}
 
 		var beforeCount int
-		if reportRepo != nil {
-			beforeUser, err := reportRepo.FindUser(r.Context(), login)
-			if err == nil {
-				beforeCount = len(beforeUser.Notifications)
-			}
+		beforeUser, err := repo.FindUser(r.Context(), login)
+		if err == nil {
+			beforeCount = len(beforeUser.Notifications)
 		}
 
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -136,14 +156,12 @@ func main() {
 			return
 		}
 
-		if reportRepo != nil {
-			afterUser, err := reportRepo.FindUser(r.Context(), login)
-			if err == nil {
-				afterCount := len(afterUser.Notifications)
-				if afterCount > beforeCount {
-					newNotifications := afterUser.Notifications[beforeCount:afterCount]
-					pushNotifications(login, newNotifications)
-				}
+		afterUser, err := repo.FindUser(r.Context(), login)
+		if err == nil {
+			afterCount := len(afterUser.Notifications)
+			if afterCount > beforeCount {
+				newNotifications := afterUser.Notifications[beforeCount:afterCount]
+				pushNotifications(login, newNotifications)
 			}
 		}
 
@@ -155,15 +173,11 @@ func main() {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if reportRepo == nil {
-			http.Error(w, "report repository unavailable", http.StatusServiceUnavailable)
-			return
-		}
 
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
 
-		results, err := reportRepo.ListAll(ctx)
+		results, err := repo.ListAll(ctx)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -179,7 +193,11 @@ func main() {
 	}
 
 	log.Printf("HTTP gateway listening on :%s and forwarding analyze calls to %s", port, grpcAddr)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	httpServer := &http.Server{
+		Addr:    "0.0.0.0:" + port,
+		Handler: mux,
+	}
+	if err := httpServer.ListenAndServe(); err != nil {
 		log.Fatalf("gateway stopped: %v", err)
 	}
 }
