@@ -173,7 +173,7 @@ func main() {
 		_ = json.NewEncoder(w).Encode(results)
 	})
 
-	port := os.Getenv("HTTP_PORT")
+	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
