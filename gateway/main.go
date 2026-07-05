@@ -126,6 +126,20 @@ func main() {
 		stopPing := make(chan struct{})
 		go pingClient(login, ws, stopPing)
 
+		// Powiadomienie mogło powstać podczas przeładowania strony, kiedy klient
+		// WebSocket był rozłączony. Po zestawieniu nowego połączenia dostarczamy
+		// wszystkie nieprzeczytane alerty zamiast bezpowrotnie je pomijać.
+		user, err := repo.FindUser(r.Context(), login)
+		if err != nil {
+			log.Printf("failed to load pending notifications for user %s: %v", login, err)
+		} else {
+			pending := unreadNotifications(user.Notifications)
+			if len(pending) > 0 {
+				log.Printf("sending %d pending notification(s) to user %s", len(pending), login)
+				pushNotifications(login, pending)
+			}
+		}
+
 		defer func() {
 			close(stopPing)
 			clientsMu.Lock()
@@ -166,9 +180,11 @@ func main() {
 
 		response, err := client.AnalyzeUser(ctx, &proto.AnalyzeRequest{Login: login})
 		if err != nil {
+			log.Printf("analysis failed for user %s: %v", login, err)
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
+		log.Printf("analysis completed for user %s: total=%d, exceeded=%v", login, response.GetTotalDuration(), response.GetExceededLimits())
 
 		afterUser, err := repo.FindUser(r.Context(), login)
 		if err == nil {
@@ -242,6 +258,7 @@ func pushNotifications(login string, notifications []appanalysis.Notification) {
 	client, exists := clients[login]
 	clientsMu.Unlock()
 	if !exists {
+		log.Printf("websocket client for user %s is offline; notification remains pending", login)
 		return
 	}
 
@@ -264,4 +281,14 @@ func pushNotifications(login string, notifications []appanalysis.Notification) {
 			return
 		}
 	}
+}
+
+func unreadNotifications(notifications []appanalysis.Notification) []appanalysis.Notification {
+	pending := make([]appanalysis.Notification, 0, len(notifications))
+	for _, notification := range notifications {
+		if !notification.Read {
+			pending = append(pending, notification)
+		}
+	}
+	return pending
 }
