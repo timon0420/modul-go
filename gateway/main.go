@@ -14,7 +14,6 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/joho/godotenv"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
 
 	proto "connect-to-mongodb/grpc-analysis/proto"
@@ -75,19 +74,6 @@ func main() {
 			log.Fatalf("gRPC server stopped: %v", err)
 		}
 	}()
-
-	grpcAddr := os.Getenv("GRPC_ADDR")
-	if grpcAddr == "" {
-		grpcAddr = "127.0.0.1:" + grpcPort
-	}
-
-	conn, err := grpc.Dial(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		log.Fatalf("failed to connect to gRPC server %s: %v", grpcAddr, err)
-	}
-	defer conn.Close()
-
-	client := proto.NewAnalysisServiceClient(conn)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -169,30 +155,19 @@ func main() {
 			return
 		}
 
-		var beforeCount int
-		beforeUser, err := repo.FindUser(r.Context(), login)
-		if err == nil {
-			beforeCount = len(beforeUser.Notifications)
-		}
-
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
 
-		response, err := client.AnalyzeUser(ctx, &proto.AnalyzeRequest{Login: login})
+		response, err := service.AnalyzeUser(ctx, login)
 		if err != nil {
 			log.Printf("analysis failed for user %s: %v", login, err)
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		log.Printf("analysis completed for user %s: total=%d, exceeded=%v", login, response.GetTotalDuration(), response.GetExceededLimits())
+		log.Printf("analysis completed for user %s: total=%d, exceeded=%v, new_notifications=%d", login, response.TotalDuration, response.ExceededLimits, len(response.NewNotifications))
 
-		afterUser, err := repo.FindUser(r.Context(), login)
-		if err == nil {
-			afterCount := len(afterUser.Notifications)
-			if afterCount > beforeCount {
-				newNotifications := afterUser.Notifications[beforeCount:afterCount]
-				pushNotifications(login, newNotifications)
-			}
+		if len(response.NewNotifications) > 0 {
+			pushNotifications(login, response.NewNotifications)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -222,7 +197,7 @@ func main() {
 		port = "8080"
 	}
 
-	log.Printf("HTTP gateway listening on :%s and forwarding analyze calls to %s", port, grpcAddr)
+	log.Printf("HTTP gateway listening on :%s", port)
 	httpServer := &http.Server{
 		Addr:    "0.0.0.0:" + port,
 		Handler: mux,

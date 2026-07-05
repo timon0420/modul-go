@@ -24,7 +24,13 @@ func Connect(ctx context.Context, cfg Config) (*mongodriver.Client, *mongodriver
 		return nil, nil, errors.New("MONGO_URI is not set")
 	}
 	if cfg.Database == "" {
+		cfg.Database = os.Getenv("MONGO_DATABASE")
+	}
+	if cfg.Database == "" {
 		cfg.Database = "digital-activities"
+	}
+	if cfg.Collection == "" {
+		cfg.Collection = os.Getenv("MONGO_COLLECTION")
 	}
 	if cfg.Collection == "" {
 		cfg.Collection = "activities"

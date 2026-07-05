@@ -3,6 +3,7 @@ package analysis
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"time"
 
@@ -57,16 +58,25 @@ func (r *Repository) ListAll(ctx context.Context) ([]UserActivity, error) {
 }
 
 func (r *Repository) SaveNotifications(ctx context.Context, login string, notifications []Notification) error {
-	for _, notif := range notifications {
-		_, err := r.collection.UpdateOne(
-			ctx,
-			bson.M{"login": login},
-			bson.M{"$push": bson.M{"notifications": notif}},
-		)
-		if err != nil {
-			return err
-		}
+	if len(notifications) == 0 {
+		return nil
 	}
+
+	result, err := r.collection.UpdateOne(
+		ctx,
+		bson.M{"login": login},
+		bson.M{"$push": bson.M{"notifications": bson.M{"$each": notifications}}},
+	)
+	if err != nil {
+		return err
+	}
+	if result.MatchedCount != 1 {
+		return fmt.Errorf("user %q was not found while saving notifications", login)
+	}
+	if result.ModifiedCount != 1 {
+		return fmt.Errorf("notifications for user %q were not written", login)
+	}
+
 	return nil
 }
 
