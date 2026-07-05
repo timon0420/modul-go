@@ -38,6 +38,11 @@ var (
 	}
 )
 
+const (
+	wsPongWait   = 60 * time.Second
+	wsPingPeriod = 25 * time.Second
+)
+
 func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println(".env not loaded, using environment variables")
@@ -73,7 +78,7 @@ func main() {
 
 	grpcAddr := os.Getenv("GRPC_ADDR")
 	if grpcAddr == "" {
-		grpcAddr = "127.0.0.1:50051"
+		grpcAddr = "127.0.0.1:" + grpcPort
 	}
 
 	conn, err := grpc.Dial(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -108,12 +113,21 @@ func main() {
 			_ = oldConn.conn.Close()
 			oldConn.mu.Unlock()
 		}
-		clients[login] = &wsClient{conn: conn}
+		ws := &wsClient{conn: conn}
+		clients[login] = ws
 		clientsMu.Unlock()
 
 		log.Printf("websocket connected for user %s", login)
+		_ = conn.SetReadDeadline(time.Now().Add(wsPongWait))
+		conn.SetPongHandler(func(string) error {
+			return conn.SetReadDeadline(time.Now().Add(wsPongWait))
+		})
+
+		stopPing := make(chan struct{})
+		go pingClient(login, ws, stopPing)
 
 		defer func() {
+			close(stopPing)
 			clientsMu.Lock()
 			if client, exists := clients[login]; exists && client.conn == conn {
 				delete(clients, login)
@@ -199,6 +213,27 @@ func main() {
 	}
 	if err := httpServer.ListenAndServe(); err != nil {
 		log.Fatalf("gateway stopped: %v", err)
+	}
+}
+
+func pingClient(login string, client *wsClient, stop <-chan struct{}) {
+	ticker := time.NewTicker(wsPingPeriod)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			client.mu.Lock()
+			err := client.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
+			client.mu.Unlock()
+			if err != nil {
+				log.Printf("websocket ping error for user %s: %v", login, err)
+				_ = client.conn.Close()
+				return
+			}
+		case <-stop:
+			return
+		}
 	}
 }
 

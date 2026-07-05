@@ -93,7 +93,7 @@ func (s *Service) AnalyzeUser(ctx context.Context, login string) (AnalysisReport
 
 	if len(newNotifications) > 0 {
 		if err := s.repo.SaveNotifications(ctx, login, newNotifications); err != nil {
-			log.Printf("Failed to save notification(s): %v", err)
+			return AnalysisReport{}, fmt.Errorf("save notifications: %w", err)
 		}
 	}
 
