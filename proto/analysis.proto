@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package analysis;
+
+option go_package = "connect-to-mongodb/grpc-analysis/proto;proto";
+
+service AnalysisService {
+  rpc AnalyzeUser (AnalyzeRequest) returns (AnalysisResponse);
+}
+
+message AnalyzeRequest {
+  string login = 1;
+}
+
+message AnalysisResponse {
+  string login = 1;
+  string date = 2;
+  int32 total_duration = 3;
+  bool global_limit_exceeded = 4;
+  repeated string exceeded_limits = 5;
+}
