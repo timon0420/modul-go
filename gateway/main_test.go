@@ -1,23 +1,20 @@
 package main
 
 import (
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
-
-	appanalysis "connect-to-mongodb/internal/analysis"
 )
 
-func TestUnreadNotifications(t *testing.T) {
-	notifications := []appanalysis.Notification{
-		{ID: "unread-1", Read: false},
-		{ID: "read", Read: true},
-		{ID: "unread-2", Read: false},
-	}
-
-	pending := unreadNotifications(notifications)
-	if len(pending) != 2 {
-		t.Fatalf("expected 2 pending notifications, got %d", len(pending))
-	}
-	if pending[0].ID != "unread-1" || pending[1].ID != "unread-2" {
-		t.Fatalf("unexpected pending notifications: %#v", pending)
+func TestRequestLoggerCallsHandler(t *testing.T) {
+	called := false
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := requestLogger(logger, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true; w.WriteHeader(http.StatusNoContent) }))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if !called || recorder.Code != http.StatusNoContent {
+		t.Fatal("handler was not called correctly")
 	}
 }

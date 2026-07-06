@@ -3,267 +3,93 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"log"
-	"net"
+	"log/slog"
 	"net/http"
 	"os"
-	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
-	"github.com/joho/godotenv"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/reflection"
-
-	proto "connect-to-mongodb/grpc-analysis/proto"
 	appanalysis "connect-to-mongodb/internal/analysis"
-)
-
-type wsClient struct {
-	conn *websocket.Conn
-	mu   sync.Mutex
-}
-
-var (
-	clients   = make(map[string]*wsClient)
-	clientsMu sync.Mutex
-	upgrader  = websocket.Upgrader{
-		ReadBufferSize:  1024,
-		WriteBufferSize: 1024,
-		CheckOrigin: func(r *http.Request) bool {
-			return true
-		},
-	}
-)
-
-const (
-	wsPongWait   = 60 * time.Second
-	wsPingPeriod = 25 * time.Second
+	appLogger "connect-to-mongodb/internal/logger"
+	"github.com/joho/godotenv"
 )
 
 func main() {
-	if err := godotenv.Load(); err != nil {
-		log.Println(".env not loaded, using environment variables")
-	}
-
+	_ = godotenv.Load()
+	logger := appLogger.New()
+	slog.SetDefault(logger)
 	repo, err := appanalysis.NewRepository(context.Background())
 	if err != nil {
-		log.Fatalf("failed to connect to MongoDB: %v", err)
+		logger.Error("failed to connect to MongoDB", "error", err)
+		os.Exit(1)
 	}
 	defer repo.Close(context.Background())
-
 	service := appanalysis.NewService(repo)
-	grpcServer := grpc.NewServer()
-	proto.RegisterAnalysisServiceServer(grpcServer, appanalysis.NewGRPCServer(service))
-	reflection.Register(grpcServer)
-
-	grpcPort := os.Getenv("GRPC_PORT")
-	if grpcPort == "" {
-		grpcPort = "50051"
-	}
-
-	grpcListener, err := net.Listen("tcp", ":"+grpcPort)
-	if err != nil {
-		log.Fatalf("failed to listen on %s: %v", grpcPort, err)
-	}
-
-	go func() {
-		log.Printf("gRPC analysis service listening on :%s", grpcPort)
-		if err := grpcServer.Serve(grpcListener); err != nil {
-			log.Fatalf("gRPC server stopped: %v", err)
-		}
-	}()
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
-	})
-	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		login := r.URL.Query().Get("login")
-		if login == "" {
-			http.Error(w, "missing login parameter", http.StatusBadRequest)
-			return
-		}
-
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			log.Printf("websocket upgrade error: %v", err)
-			return
-		}
-
-		clientsMu.Lock()
-		if oldConn, exists := clients[login]; exists {
-			oldConn.mu.Lock()
-			_ = oldConn.conn.Close()
-			oldConn.mu.Unlock()
-		}
-		ws := &wsClient{conn: conn}
-		clients[login] = ws
-		clientsMu.Unlock()
-
-		log.Printf("websocket connected for user %s", login)
-		_ = conn.SetReadDeadline(time.Now().Add(wsPongWait))
-		conn.SetPongHandler(func(string) error {
-			return conn.SetReadDeadline(time.Now().Add(wsPongWait))
-		})
-
-		stopPing := make(chan struct{})
-		go pingClient(login, ws, stopPing)
-
-		// Powiadomienie mogło powstać podczas przeładowania strony, kiedy klient
-		// WebSocket był rozłączony. Po zestawieniu nowego połączenia dostarczamy
-		// wszystkie nieprzeczytane alerty zamiast bezpowrotnie je pomijać.
-		user, err := repo.FindUser(r.Context(), login)
-		if err != nil {
-			log.Printf("failed to load pending notifications for user %s: %v", login, err)
-		} else {
-			pending := unreadNotifications(user.Notifications)
-			if len(pending) > 0 {
-				log.Printf("sending %d pending notification(s) to user %s", len(pending), login)
-				pushNotifications(login, pending)
-			}
-		}
-
-		defer func() {
-			close(stopPing)
-			clientsMu.Lock()
-			if client, exists := clients[login]; exists && client.conn == conn {
-				delete(clients, login)
-			}
-			clientsMu.Unlock()
-			_ = conn.Close()
-			log.Printf("websocket disconnected for user %s", login)
-		}()
-
-		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				break
-			}
-		}
 	})
 	mux.HandleFunc("/analyze", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-
 		login := r.URL.Query().Get("login")
 		if login == "" {
 			http.Error(w, "missing login parameter", http.StatusBadRequest)
 			return
 		}
-
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
-
 		response, err := service.AnalyzeUser(ctx, login)
 		if err != nil {
-			log.Printf("analysis failed for user %s: %v", login, err)
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			logger.Error("analysis failed", "login", login, "error", err)
+			http.Error(w, "analysis failed", http.StatusBadGateway)
 			return
 		}
-		log.Printf("analysis completed for user %s: total=%d, exceeded=%v, new_notifications=%d", login, response.TotalDuration, response.ExceededLimits, len(response.NewNotifications))
-
-		if len(response.NewNotifications) > 0 {
-			pushNotifications(login, response.NewNotifications)
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(response)
+		logger.Info("analysis completed", "login", login, "duration_minutes", response.TotalDuration, "limits_exceeded", response.ExceededLimits, "new_notifications", len(response.NewNotifications))
+		writeJSON(w, response)
 	})
 	mux.HandleFunc("/report", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
-
-		results, err := repo.ListAll(ctx)
+		results, err := service.ListAll(ctx)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			logger.Error("report generation failed", "error", err)
+			http.Error(w, "report generation failed", http.StatusInternalServerError)
 			return
 		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(results)
+		logger.Info("JSON report generated", "users", len(results))
+		w.Header().Set("Content-Disposition", `attachment; filename="activity-report.json"`)
+		writeJSON(w, results)
 	})
-
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-
-	log.Printf("HTTP gateway listening on :%s", port)
-	httpServer := &http.Server{
-		Addr:    "0.0.0.0:" + port,
-		Handler: mux,
-	}
-	if err := httpServer.ListenAndServe(); err != nil {
-		log.Fatalf("gateway stopped: %v", err)
+	server := &http.Server{Addr: "0.0.0.0:" + port, Handler: requestLogger(logger, mux), ReadHeaderTimeout: 5 * time.Second}
+	logger.Info("HTTP gateway started", "port", port)
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		logger.Error("HTTP gateway stopped", "error", err)
+		os.Exit(1)
 	}
 }
 
-func pingClient(login string, client *wsClient, stop <-chan struct{}) {
-	ticker := time.NewTicker(wsPingPeriod)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			client.mu.Lock()
-			err := client.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
-			client.mu.Unlock()
-			if err != nil {
-				log.Printf("websocket ping error for user %s: %v", login, err)
-				_ = client.conn.Close()
-				return
-			}
-		case <-stop:
-			return
-		}
+func writeJSON(w http.ResponseWriter, value any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(value); err != nil {
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 
-func pushNotifications(login string, notifications []appanalysis.Notification) {
-	clientsMu.Lock()
-	client, exists := clients[login]
-	clientsMu.Unlock()
-	if !exists {
-		log.Printf("websocket client for user %s is offline; notification remains pending", login)
-		return
-	}
-
-	for _, notification := range notifications {
-		payload := map[string]any{
-			"id":         notification.ID,
-			"type":       notification.Type,
-			"message":    notification.Message,
-			"created_at": notification.CreatedAt,
-			"read":       notification.Read,
-			"login":      login,
-			"event_type": fmt.Sprintf("notification:%s", notification.Type),
-		}
-
-		client.mu.Lock()
-		err := client.conn.WriteJSON(payload)
-		client.mu.Unlock()
-		if err != nil {
-			log.Printf("websocket send error for user %s: %v", login, err)
-			return
-		}
-	}
-}
-
-func unreadNotifications(notifications []appanalysis.Notification) []appanalysis.Notification {
-	pending := make([]appanalysis.Notification, 0, len(notifications))
-	for _, notification := range notifications {
-		if !notification.Read {
-			pending = append(pending, notification)
-		}
-	}
-	return pending
+func requestLogger(logger *slog.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		next.ServeHTTP(w, r)
+		logger.Info("HTTP request", "method", r.Method, "path", r.URL.Path, "remote_addr", r.RemoteAddr, "duration_ms", time.Since(started).Milliseconds())
+	})
 }
