@@ -3,7 +3,6 @@ package analysis
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"time"
 
@@ -57,29 +56,6 @@ func (r *Repository) ListAll(ctx context.Context) ([]UserActivity, error) {
 	return results, nil
 }
 
-func (r *Repository) SaveNotifications(ctx context.Context, login string, notifications []Notification) error {
-	if len(notifications) == 0 {
-		return nil
-	}
-
-	result, err := r.collection.UpdateOne(
-		ctx,
-		bson.M{"login": login},
-		bson.M{"$push": bson.M{"notifications": bson.M{"$each": notifications}}},
-	)
-	if err != nil {
-		return err
-	}
-	if result.MatchedCount != 1 {
-		return fmt.Errorf("user %q was not found while saving notifications", login)
-	}
-	if result.ModifiedCount != 1 {
-		return fmt.Errorf("notifications for user %q were not written", login)
-	}
-
-	return nil
-}
-
 func (r *Repository) WriteReport(report AnalysisReport) {
 	reportJSON, err := json.MarshalIndent(report, "", "\t")
 	if err != nil {
@@ -88,19 +64,19 @@ func (r *Repository) WriteReport(report AnalysisReport) {
 	_ = os.WriteFile("report.json", reportJSON, 0644)
 }
 
-func parseActivityDate(value interface{}) (time.Time, bool) {
+func parseActivityDate(value interface{}, location *time.Location) (time.Time, bool) {
 	switch v := value.(type) {
 	case primitive.DateTime:
-		return v.Time(), true
+		return v.Time().In(location), true
 	case string:
-		if parsed, err := time.Parse("2006-01-02", v); err == nil {
+		if parsed, err := time.ParseInLocation("2006-01-02", v, location); err == nil {
 			return parsed, true
 		}
 		if parsed, err := time.Parse(time.RFC3339, v); err == nil {
-			return parsed, true
+			return parsed.In(location), true
 		}
 	case time.Time:
-		return v, true
+		return v.In(location), true
 	}
 	return time.Time{}, false
 }
@@ -123,18 +99,4 @@ func parseDuration(value interface{}) int {
 	default:
 		return 0
 	}
-}
-
-func hasNotificationToday(notifications []Notification, message string, year int, month time.Month, day int) bool {
-	for _, n := range notifications {
-		if n.Message != message {
-			continue
-		}
-		t := n.CreatedAt.Time()
-		nYear, nMonth, nDay := t.Date()
-		if nYear == year && nMonth == month && nDay == day {
-			return true
-		}
-	}
-	return false
 }

@@ -47,7 +47,7 @@ func main() {
 			http.Error(w, "analysis failed", http.StatusBadGateway)
 			return
 		}
-		logger.Info("analysis completed", "login", login, "duration_minutes", response.TotalDuration, "limits_exceeded", response.ExceededLimits, "new_notifications", len(response.NewNotifications))
+		logger.Info("analysis completed", "login", login, "duration_minutes", response.TotalDuration, "limits_exceeded", response.ExceededLimits)
 		writeJSON(w, response)
 	})
 	mux.HandleFunc("/report", func(w http.ResponseWriter, r *http.Request) {

@@ -45,5 +45,4 @@ type AnalysisReport struct {
 	GlobalLimitExceeded bool           `json:"global_limit_exceeded"`
 	ActivitiesSummary   map[string]int `json:"activities_summary_minutes"`
 	ExceededLimits      []string       `json:"exceeded_limits"`
-	NewNotifications    []Notification `json:"new_notifications"`
 }

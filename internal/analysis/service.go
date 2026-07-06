@@ -2,116 +2,91 @@ package analysis
 
 import (
 	"context"
-	"fmt"
-	"log"
+	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"time"
-
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	_ "time/tzdata"
 )
 
-type Service struct {
-	repo *Repository
-}
+type Service struct{ repo *Repository }
 
-func NewService(repo *Repository) *Service {
-	return &Service{repo: repo}
-}
+func NewService(repo *Repository) *Service { return &Service{repo: repo} }
 
+// AnalyzeUser calculates report data only. Limit notifications are owned by Spring Boot.
 func (s *Service) AnalyzeUser(ctx context.Context, login string) (AnalysisReport, error) {
-	userUA, err := s.repo.FindUser(ctx, login)
+	user, err := s.repo.FindUser(ctx, login)
 	if err != nil {
 		return AnalysisReport{}, err
 	}
 
-	now := time.Now()
-	todayYear, todayMonth, todayDay := now.Date()
-
-	activitiesSummary := make(map[string]int)
+	location := applicationLocation()
+	now := time.Now().In(location)
+	year, month, day := now.Date()
+	summary := make(map[string]int)
 	totalDuration := 0
-
-	for _, act := range userUA.Activities {
-		actTime, ok := parseActivityDate(act.Date)
+	for _, activity := range user.Activities {
+		activityTime, ok := parseActivityDate(activity.Date, location)
 		if !ok {
-			log.Printf("Skipping activity with unsupported date type: %T", act.Date)
+			slog.Warn("skipping activity with unsupported date", "type", "unknown")
 			continue
 		}
-
-		actYear, actMonth, actDay := actTime.Date()
-		if actYear != todayYear || actMonth != todayMonth || actDay != todayDay {
+		activityYear, activityMonth, activityDay := activityTime.Date()
+		if activityYear != year || activityMonth != month || activityDay != day {
 			continue
 		}
-
-		duration := parseDuration(act.Time)
-		activitiesSummary[strings.ToLower(act.Name)] += duration
+		duration := parseDuration(activity.Time)
+		summary[strings.ToLower(activity.Name)] += duration
 		totalDuration += duration
 	}
 
-	var newNotifications []Notification
-	exceededLimits := []string{}
-	globalLimitStr := "Brak"
-
-	if userUA.DailyLimits != nil {
-		if userUA.DailyLimits.GlobalLimit != nil {
-			gLimit := *userUA.DailyLimits.GlobalLimit
-			globalLimitStr = strconv.Itoa(gLimit) + " min"
-			if totalDuration > gLimit {
-				msg := fmt.Sprintf("Przekroczono dobowy limit globalny aktywności! Czas: %d min, limit: %d min.", totalDuration, gLimit)
-				exceededLimits = append(exceededLimits, "GLOBAL")
-				if !hasNotificationToday(userUA.Notifications, msg, todayYear, todayMonth, todayDay) {
-					newNotifications = append(newNotifications, Notification{
-						ID:        primitive.NewObjectID().Hex(),
-						Type:      "LIMIT_WARNING",
-						Message:   msg,
-						CreatedAt: primitive.NewDateTimeFromTime(time.Now()),
-						Read:      false,
-					})
-				}
+	exceeded := []string{}
+	globalLimit := "Brak"
+	if user.DailyLimits != nil {
+		if user.DailyLimits.GlobalLimit != nil {
+			limit := *user.DailyLimits.GlobalLimit
+			globalLimit = strconv.Itoa(limit) + " min"
+			if totalDuration > limit {
+				exceeded = append(exceeded, "GLOBAL")
 			}
 		}
-
-		for _, lim := range userUA.DailyLimits.Activities {
-			spent, ok := activitiesSummary[strings.ToLower(lim.ActivityName)]
-			if !ok || spent <= lim.Limit {
-				continue
+		for _, limit := range user.DailyLimits.Activities {
+			if summary[strings.ToLower(limit.ActivityName)] > limit.Limit {
+				exceeded = append(exceeded, limit.ActivityName)
 			}
-
-			msg := fmt.Sprintf("Przekroczono dobowy limit dla aktywności '%s'! Czas: %d min, limit: %d min.", lim.ActivityName, spent, lim.Limit)
-			exceededLimits = append(exceededLimits, lim.ActivityName)
-			if !hasNotificationToday(userUA.Notifications, msg, todayYear, todayMonth, todayDay) {
-				newNotifications = append(newNotifications, Notification{
-					ID:        primitive.NewObjectID().Hex(),
-					Type:      "LIMIT_WARNING",
-					Message:   msg,
-					CreatedAt: primitive.NewDateTimeFromTime(time.Now()),
-					Read:      false,
-				})
-			}
-		}
-	}
-
-	if len(newNotifications) > 0 {
-		if err := s.repo.SaveNotifications(ctx, login, newNotifications); err != nil {
-			return AnalysisReport{}, fmt.Errorf("save notifications: %w", err)
 		}
 	}
 
 	report := AnalysisReport{
-		Login:               login,
-		Date:                now.Format("2006-01-02"),
-		GlobalLimit:         globalLimitStr,
-		TotalDuration:       totalDuration,
-		GlobalLimitExceeded: len(exceededLimits) > 0 && exceededLimits[0] == "GLOBAL",
-		ActivitiesSummary:   activitiesSummary,
-		ExceededLimits:      exceededLimits,
-		NewNotifications:    newNotifications,
+		Login: login, Date: now.Format("2006-01-02"), GlobalLimit: globalLimit,
+		TotalDuration: totalDuration, GlobalLimitExceeded: contains(exceeded, "GLOBAL"),
+		ActivitiesSummary: summary, ExceededLimits: exceeded,
 	}
-
 	s.repo.WriteReport(report)
 	return report, nil
 }
 
-func (s *Service) ListAll(ctx context.Context) ([]UserActivity, error) {
-	return s.repo.ListAll(ctx)
+func contains(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
+
+func applicationLocation() *time.Location {
+	name := os.Getenv("APP_TIMEZONE")
+	if name == "" {
+		name = "Europe/Warsaw"
+	}
+	location, err := time.LoadLocation(name)
+	if err != nil {
+		slog.Warn("invalid APP_TIMEZONE, using UTC", "time_zone", name, "error", err)
+		return time.UTC
+	}
+	return location
+}
+
+func (s *Service) ListAll(ctx context.Context) ([]UserActivity, error) { return s.repo.ListAll(ctx) }
