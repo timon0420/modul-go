@@ -59,7 +59,8 @@ func (s *Service) AnalyzeUser(ctx context.Context, login string) (AnalysisReport
 	}
 
 	report := AnalysisReport{
-		Login: login, Date: now.Format("2006-01-02"), GlobalLimit: globalLimit,
+		Login: login, Date: now.Format("2006-01-02"), DailyLimits: user.DailyLimits,
+		Activities: user.Activities, Notifications: user.Notifications, GlobalLimit: globalLimit,
 		TotalDuration: totalDuration, GlobalLimitExceeded: contains(exceeded, "GLOBAL"),
 		ActivitiesSummary: summary, ExceededLimits: exceeded,
 	}

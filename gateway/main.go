@@ -15,7 +15,7 @@ import (
 
 func main() {
 	_ = godotenv.Load()
-	logger := appLogger.New()
+	logger, logHub := appLogger.New()
 	slog.SetDefault(logger)
 	repo, err := appanalysis.NewRepository(context.Background())
 	if err != nil {
@@ -25,6 +25,7 @@ func main() {
 	defer repo.Close(context.Background())
 	service := appanalysis.NewService(repo)
 	mux := http.NewServeMux()
+	mux.Handle("/ws/logs", logHub)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))

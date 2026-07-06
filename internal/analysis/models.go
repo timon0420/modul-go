@@ -40,6 +40,9 @@ type UserActivity struct {
 type AnalysisReport struct {
 	Login               string         `json:"login"`
 	Date                string         `json:"date"`
+	DailyLimits         *DailyLimits   `json:"daily_limits"`
+	Activities          []Activity     `json:"activities"`
+	Notifications       []Notification `json:"notifications"`
 	GlobalLimit         string         `json:"global_limit"`
 	TotalDuration       int            `json:"total_duration_minutes"`
 	GlobalLimitExceeded bool           `json:"global_limit_exceeded"`
