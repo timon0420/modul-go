@@ -5,24 +5,24 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	appanalysis "connect-to-mongodb/internal/analysis"
 	appLogger "connect-to-mongodb/internal/logger"
 	"github.com/joho/godotenv"
 
-	httpSwagger "github.com/swaggo/http-swagger"
 	_ "connect-to-mongodb/docs"
-
-
+	httpSwagger "github.com/swaggo/http-swagger"
 )
 
-//@title Connect to MongoDB API
-//@version 1.0
-//@description This is a sample server for Connect to MongoDB API.
-//@host modul-go.onrender.com
-//@BasePath /
+// @title Connect to MongoDB API
+// @version 1.0
+// @description This is a sample server for Connect to MongoDB API.
+// @host modul-go.onrender.com
+// @BasePath /
 func main() {
 	_ = godotenv.Load()
 	logger, logHub := appLogger.New()
@@ -79,6 +79,74 @@ func main() {
 		w.Header().Set("Content-Disposition", `attachment; filename="activity-report.json"`)
 		writeJSON(w, results)
 	})
+	mux.HandleFunc("/import", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload any
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 10<<20))
+		if err := decoder.Decode(&payload); err != nil {
+			http.Error(w, "invalid JSON file", http.StatusBadRequest)
+			return
+		}
+		users, ok := normalizeImportedUsers(payload)
+		if !ok || len(users) == 0 {
+			http.Error(w, "JSON must contain a user object or an array of user objects with login", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		imported, err := service.ImportUsers(ctx, users)
+		if err != nil {
+			logger.Error("import failed", "error", err)
+			http.Error(w, "import failed", http.StatusInternalServerError)
+			return
+		}
+		logger.Info("JSON data imported", "users", imported)
+		writeJSON(w, map[string]int{"imported": imported})
+	})
+	mux.HandleFunc("/users", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		deleted, err := service.DeleteAll(ctx)
+		if err != nil {
+			logger.Error("database cleanup failed", "error", err)
+			http.Error(w, "database cleanup failed", http.StatusInternalServerError)
+			return
+		}
+		logger.Info("MongoDB collection cleared", "deleted", deleted)
+		writeJSON(w, map[string]int64{"deleted": deleted})
+	})
+	mux.HandleFunc("/users/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		login, err := url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/users/"))
+		if err != nil || strings.TrimSpace(login) == "" {
+			http.Error(w, "invalid login", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		deleted, err := service.DeleteByLogin(ctx, login)
+		if err != nil {
+			logger.Error("user deletion failed", "login", login, "error", err)
+			http.Error(w, "user deletion failed", http.StatusInternalServerError)
+			return
+		}
+		if deleted == 0 {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
+		logger.Info("MongoDB user deleted", "login", login)
+		writeJSON(w, map[string]int64{"deleted": deleted})
+	})
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -91,49 +159,71 @@ func main() {
 	}
 }
 
-//@Summary Write JSON response
-//@Description Write JSON response
-//@Tags analysis
-//@Accept json
-//@Produce json
-//@Success 200 {object} appanalysis.AnalysisReport
+// @Summary Write JSON response
+// @Description Write JSON response
+// @Tags analysis
+// @Accept json
+// @Produce json
+// @Success 200 {object} appanalysis.AnalysisReport
 func dummyHealthz() {}
 
-//@Summary Log HTTP requests
-//@Description Logs HTTP requests for monitoring and debugging
-//@Tags logging
-//@Accept json
-//@Produce json
-//@Success 200 {object} map[string]string
-//@Failure 500 {object} map[string]string
-//@Router /ws/logs [get]
+// @Summary Log HTTP requests
+// @Description Logs HTTP requests for monitoring and debugging
+// @Tags logging
+// @Accept json
+// @Produce json
+// @Success 200 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /ws/logs [get]
 func dummyRequestLogger() {}
 
-//@Summary Analyze user activities
-//@Description Analyzes user activities and returns a report
-//@Tags analysis
-//@Accept json
-//@Produce json
-//@Param login query string true "User login"
-//@Success 200 {object} appanalysis.AnalysisReport
-//@Failure 400 {object} map[string]string
-//@Failure 502 {object} map[string]string
-//@Router /analyze [get]
+// @Summary Analyze user activities
+// @Description Analyzes user activities and returns a report
+// @Tags analysis
+// @Accept json
+// @Produce json
+// @Param login query string true "User login"
+// @Success 200 {object} appanalysis.AnalysisReport
+// @Failure 400 {object} map[string]string
+// @Failure 502 {object} map[string]string
+// @Router /analyze [get]
 func dummyAnalyze() {}
 
-//@Summary Generate JSON report
-//@Description Generates a JSON report of all user activities
-//@Tags analysis
-//@Produce json
-//@Success 200 {array} appanalysis.AnalysisReport
-//@Failure 500 {object} map[string]string
-//@Router /report [get]
+// @Summary Generate JSON report
+// @Description Generates a JSON report of all user activities
+// @Tags analysis
+// @Produce json
+// @Success 200 {array} appanalysis.AnalysisReport
+// @Failure 500 {object} map[string]string
+// @Router /report [get]
 func dummyReport() {}
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if err := json.NewEncoder(w).Encode(value); err != nil {
 		slog.Error("failed to encode response", "error", err)
 	}
+}
+
+func normalizeImportedUsers(payload any) ([]map[string]interface{}, bool) {
+	switch value := payload.(type) {
+	case map[string]interface{}:
+		if login, ok := value["login"].(string); ok && login != "" {
+			return []map[string]interface{}{value}, true
+		}
+	case []interface{}:
+		users := make([]map[string]interface{}, 0, len(value))
+		for _, item := range value {
+			user, ok := item.(map[string]interface{})
+			if !ok {
+				return nil, false
+			}
+			if login, ok := user["login"].(string); ok && login != "" {
+				users = append(users, user)
+			}
+		}
+		return users, len(users) > 0
+	}
+	return nil, false
 }
 
 func requestLogger(logger *slog.Logger, next http.Handler) http.Handler {

@@ -91,3 +91,13 @@ func applicationLocation() *time.Location {
 }
 
 func (s *Service) ListAll(ctx context.Context) ([]UserActivity, error) { return s.repo.ListAll(ctx) }
+
+func (s *Service) ImportUsers(ctx context.Context, users []map[string]interface{}) (int, error) {
+	return s.repo.ImportUsers(ctx, users)
+}
+
+func (s *Service) DeleteAll(ctx context.Context) (int64, error) { return s.repo.DeleteAll(ctx) }
+
+func (s *Service) DeleteByLogin(ctx context.Context, login string) (int64, error) {
+	return s.repo.DeleteByLogin(ctx, login)
+}

@@ -11,6 +11,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	mongodriver "go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type Repository struct {
@@ -54,6 +55,45 @@ func (r *Repository) ListAll(ctx context.Context) ([]UserActivity, error) {
 		return nil, err
 	}
 	return results, nil
+}
+
+func (r *Repository) ImportUsers(ctx context.Context, users []map[string]interface{}) (int, error) {
+	imported := 0
+	for _, user := range users {
+		loginValue, ok := user["login"].(string)
+		if !ok || loginValue == "" {
+			continue
+		}
+		delete(user, "_id")
+		delete(user, "id")
+		_, err := r.collection.ReplaceOne(
+			ctx,
+			bson.M{"login": loginValue},
+			user,
+			options.Replace().SetUpsert(true),
+		)
+		if err != nil {
+			return imported, err
+		}
+		imported++
+	}
+	return imported, nil
+}
+
+func (r *Repository) DeleteAll(ctx context.Context) (int64, error) {
+	result, err := r.collection.DeleteMany(ctx, bson.D{})
+	if err != nil {
+		return 0, err
+	}
+	return result.DeletedCount, nil
+}
+
+func (r *Repository) DeleteByLogin(ctx context.Context, login string) (int64, error) {
+	result, err := r.collection.DeleteOne(ctx, bson.M{"login": login})
+	if err != nil {
+		return 0, err
+	}
+	return result.DeletedCount, nil
 }
 
 func (r *Repository) WriteReport(report AnalysisReport) {
