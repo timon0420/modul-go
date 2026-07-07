@@ -113,6 +113,41 @@ paths:
       summary: Analyze user activities
       tags:
       - analysis
+  /import:
+    post:
+      consumes:
+      - application/json
+      description: Imports users from a JSON payload
+      parameters:
+      - description: JSON payload containing user objects
+        in: body
+        name: payload
+        required: true
+        schema: {}
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: integer
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Import users from JSON
+      tags:
+      - analysis
   /report:
     get:
       description: Generates a JSON report of all user activities
@@ -132,6 +167,62 @@ paths:
               type: string
             type: object
       summary: Generate JSON report
+      tags:
+      - analysis
+  /users:
+    delete:
+      description: Deletes all users from the database
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              format: int64
+              type: integer
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Delete all users
+      tags:
+      - analysis
+  /users/{login}:
+    delete:
+      description: Deletes a user by their login from the database
+      parameters:
+      - description: User login
+        in: path
+        name: login
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              format: int64
+              type: integer
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Delete user by login
       tags:
       - analysis
   /ws/logs:

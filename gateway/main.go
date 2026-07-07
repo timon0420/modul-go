@@ -193,6 +193,39 @@ func dummyAnalyze() {}
 // @Failure 500 {object} map[string]string
 // @Router /report [get]
 func dummyReport() {}
+
+// @Summary Import users from JSON
+// @Description Imports users from a JSON payload
+// @Tags analysis
+// @Accept json
+// @Produce json
+// @Param payload body any true "JSON payload containing user objects"
+// @Success 200 {object} map[string]int
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /import [post]
+func dummyImport() {}
+
+// @Summary Delete all users
+// @Description Deletes all users from the database
+// @Tags analysis
+// @Produce json
+// @Success 200 {object} map[string]int64
+// @Failure 500 {object} map[string]string
+// @Router /users [delete]
+func dummyDeleteAllUsers() {}
+
+// @Summary Delete user by login
+// @Description Deletes a user by their login from the database
+// @Tags analysis
+// @Produce json
+// @Param login path string true "User login"
+// @Success 200 {object} map[string]int64
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /users/{login} [delete]
+func dummyDeleteUserByLogin() {}
+
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if err := json.NewEncoder(w).Encode(value); err != nil {
