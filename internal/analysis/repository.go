@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strconv"
 	"time"
 
 	appmongo "connect-to-mongodb/mongo"
@@ -72,6 +73,7 @@ func (r *Repository) ImportUsers(ctx context.Context, users []map[string]interfa
 		if _, ok := user["notifications"]; !ok || user["notifications"] == nil {
 			user["notifications"] = []interface{}{}
 		}
+		normalizeImportedUser(user)
 		_, err := r.collection.ReplaceOne(
 			ctx,
 			bson.M{"login": loginValue},
@@ -84,6 +86,51 @@ func (r *Repository) ImportUsers(ctx context.Context, users []map[string]interfa
 		imported++
 	}
 	return imported, nil
+}
+
+func normalizeImportedUser(user map[string]interface{}) {
+	if activities, ok := user["activities"].([]interface{}); ok {
+		for _, item := range activities {
+			activity, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if timeValue, ok := activity["time"].(string); ok {
+				if parsed, err := strconv.Atoi(timeValue); err == nil {
+					activity["time"] = parsed
+				}
+			}
+			if dateValue, ok := activity["date"].(string); ok {
+				if parsed, ok := parseImportedDate(dateValue); ok {
+					activity["date"] = primitive.NewDateTimeFromTime(parsed)
+				}
+			}
+		}
+	}
+
+	if notifications, ok := user["notifications"].([]interface{}); ok {
+		for _, item := range notifications {
+			notification, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if createdAt, ok := notification["created_at"].(string); ok {
+				if parsed, ok := parseImportedDate(createdAt); ok {
+					notification["created_at"] = primitive.NewDateTimeFromTime(parsed)
+				}
+			}
+		}
+	}
+}
+
+func parseImportedDate(value string) (time.Time, bool) {
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed, true
+	}
+	if parsed, err := time.Parse("2006-01-02", value); err == nil {
+		return parsed, true
+	}
+	return time.Time{}, false
 }
 
 func (r *Repository) DeleteAll(ctx context.Context) (int64, error) {
