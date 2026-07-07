@@ -66,6 +66,12 @@ func (r *Repository) ImportUsers(ctx context.Context, users []map[string]interfa
 		}
 		delete(user, "_id")
 		delete(user, "id")
+		if _, ok := user["activities"]; !ok || user["activities"] == nil {
+			user["activities"] = []interface{}{}
+		}
+		if _, ok := user["notifications"]; !ok || user["notifications"] == nil {
+			user["notifications"] = []interface{}{}
+		}
 		_, err := r.collection.ReplaceOne(
 			ctx,
 			bson.M{"login": loginValue},
