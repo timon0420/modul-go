@@ -1,0 +1,160 @@
+basePath: /
+definitions:
+  connect-to-mongodb_internal_analysis.Activity:
+    properties:
+      activity_description:
+        type: string
+      activity_name:
+        type: string
+      date: {}
+      id:
+        type: string
+      start_time:
+        type: string
+      time: {}
+    type: object
+  connect-to-mongodb_internal_analysis.ActivityLimit:
+    properties:
+      activity_name:
+        type: string
+      limit:
+        type: integer
+    type: object
+  connect-to-mongodb_internal_analysis.AnalysisReport:
+    properties:
+      activities:
+        items:
+          $ref: '#/definitions/connect-to-mongodb_internal_analysis.Activity'
+        type: array
+      activities_summary_minutes:
+        additionalProperties:
+          type: integer
+        type: object
+      daily_limits:
+        $ref: '#/definitions/connect-to-mongodb_internal_analysis.DailyLimits'
+      date:
+        type: string
+      exceeded_limits:
+        items:
+          type: string
+        type: array
+      global_limit:
+        type: string
+      global_limit_exceeded:
+        type: boolean
+      login:
+        type: string
+      notifications:
+        items:
+          $ref: '#/definitions/connect-to-mongodb_internal_analysis.Notification'
+        type: array
+      total_duration_minutes:
+        type: integer
+    type: object
+  connect-to-mongodb_internal_analysis.DailyLimits:
+    properties:
+      activities:
+        items:
+          $ref: '#/definitions/connect-to-mongodb_internal_analysis.ActivityLimit'
+        type: array
+      global_limit:
+        type: integer
+    type: object
+  connect-to-mongodb_internal_analysis.Notification:
+    properties:
+      created_at:
+        type: integer
+      id:
+        type: string
+      message:
+        type: string
+      read:
+        type: boolean
+      type:
+        type: string
+    type: object
+host: modul-go.onrender.com
+info:
+  contact: {}
+  description: This is a sample server for Connect to MongoDB API.
+  title: Connect to MongoDB API
+  version: "1.0"
+paths:
+  /analyze:
+    get:
+      consumes:
+      - application/json
+      description: Analyzes user activities and returns a report
+      parameters:
+      - description: User login
+        in: query
+        name: login
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/connect-to-mongodb_internal_analysis.AnalysisReport'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Analyze user activities
+      tags:
+      - analysis
+  /report:
+    get:
+      description: Generates a JSON report of all user activities
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/connect-to-mongodb_internal_analysis.AnalysisReport'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Generate JSON report
+      tags:
+      - analysis
+  /ws/logs:
+    get:
+      consumes:
+      - application/json
+      description: Logs HTTP requests for monitoring and debugging
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Log HTTP requests
+      tags:
+      - logging
+swagger: "2.0"

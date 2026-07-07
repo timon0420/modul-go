@@ -11,8 +11,18 @@ import (
 	appanalysis "connect-to-mongodb/internal/analysis"
 	appLogger "connect-to-mongodb/internal/logger"
 	"github.com/joho/godotenv"
+
+	httpSwagger "github.com/swaggo/http-swagger"
+	_ "connect-to-mongodb/docs"
+
+
 )
 
+//@title Connect to MongoDB API
+//@version 1.0
+//@description This is a sample server for Connect to MongoDB API.
+//@host modul-go.onrender.com
+//@BasePath /
 func main() {
 	_ = godotenv.Load()
 	logger, logHub := appLogger.New()
@@ -25,6 +35,7 @@ func main() {
 	defer repo.Close(context.Background())
 	service := appanalysis.NewService(repo)
 	mux := http.NewServeMux()
+	mux.Handle("/swagger/", httpSwagger.WrapHandler)
 	mux.Handle("/ws/logs", logHub)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -80,6 +91,44 @@ func main() {
 	}
 }
 
+//@Summary Write JSON response
+//@Description Write JSON response
+//@Tags analysis
+//@Accept json
+//@Produce json
+//@Success 200 {object} appanalysis.AnalysisReport
+func dummyHealthz() {}
+
+//@Summary Log HTTP requests
+//@Description Logs HTTP requests for monitoring and debugging
+//@Tags logging
+//@Accept json
+//@Produce json
+//@Success 200 {object} map[string]string
+//@Failure 500 {object} map[string]string
+//@Router /ws/logs [get]
+func dummyRequestLogger() {}
+
+//@Summary Analyze user activities
+//@Description Analyzes user activities and returns a report
+//@Tags analysis
+//@Accept json
+//@Produce json
+//@Param login query string true "User login"
+//@Success 200 {object} appanalysis.AnalysisReport
+//@Failure 400 {object} map[string]string
+//@Failure 502 {object} map[string]string
+//@Router /analyze [get]
+func dummyAnalyze() {}
+
+//@Summary Generate JSON report
+//@Description Generates a JSON report of all user activities
+//@Tags analysis
+//@Produce json
+//@Success 200 {array} appanalysis.AnalysisReport
+//@Failure 500 {object} map[string]string
+//@Router /report [get]
+func dummyReport() {}
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if err := json.NewEncoder(w).Encode(value); err != nil {
