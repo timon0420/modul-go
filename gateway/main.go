@@ -140,11 +140,7 @@ func main() {
 			http.Error(w, "user deletion failed", http.StatusInternalServerError)
 			return
 		}
-		if deleted == 0 {
-			http.Error(w, "user not found", http.StatusNotFound)
-			return
-		}
-		logger.Info("MongoDB user deleted", "login", login)
+		logger.Info("MongoDB user delete requested", "login", login, "deleted", deleted)
 		writeJSON(w, map[string]int64{"deleted": deleted})
 	})
 	port := os.Getenv("PORT")
